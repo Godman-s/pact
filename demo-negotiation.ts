@@ -33,7 +33,8 @@ dotenv.config({ path: '.env.demo' });
 const USDC_ADDRESS   = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 const ARIA_WALLET    = '0xfB7792E7CaEa2c96570d1eD62e205B8Dc7320d45' as const;
 const NOVA_WALLET    = '0x51A96753db8709AAf9974689DC17fd9B77830aaC' as const;
-const INVOICA_URL    = 'http://localhost:3001';
+const INVOICA_URL    = 'https://api.invoica.ai';
+const INVOICA_KEY    = 'sk_302e3efa383ddf86c2247b7c03f859e6a6b0facab582f5c4be83abea71d17047';
 const PAYMENT_USDC   = 5n;
 const PAYMENT_ATOMIC = PAYMENT_USDC * 1_000_000n;
 
@@ -177,7 +178,10 @@ async function issueInvoice(
 ): Promise<{ invoiceNumber: string; id: string }> {
   const res = await fetch(`${INVOICA_URL}/v1/invoices`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${INVOICA_KEY}`,
+    },
     body: JSON.stringify({
       customerEmail:  'aria@agent.ai',
       customerName:   'Aria Agent',
@@ -195,9 +199,9 @@ async function issueInvoice(
   });
   if (!res.ok) throw new Error(`Invoica ${res.status}: ${await res.text()}`);
   const body = await res.json() as any;
-  const inv  = body.invoice ?? body;
+  const inv  = body.data ?? body.invoice ?? body;
   return {
-    invoiceNumber: inv.invoiceNumber ?? inv.invoice_number ?? '?',
+    invoiceNumber: String(inv.invoiceNumber ?? inv.invoice_number ?? '?'),
     id:            inv.id ?? '?',
   };
 }
