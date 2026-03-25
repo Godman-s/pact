@@ -2,8 +2,13 @@
  * PACT Demo — Two Agents Negotiate, Pay via x402, Get an Invoice
  *
  * Cast:
- *   Aria  (aria@agent.ai)     — content buyer agent  (wallet: fast)
- *   Nova  (nova@creator.ai)   — independent creator   (wallet: support)
+ *   Nova  (nova@creator.ai)   — independent creator / seller  (wallet: support — has USDC)
+ *   Aria  (aria@agent.ai)     — content buyer agent            (wallet: fast    — has ETH)
+ *
+ * EIP-3009 split role:
+ *   Nova SIGNS  the TransferWithAuthorization  (she's the payer, owns the USDC)
+ *   Aria SUBMITS the transaction on-chain      (she has ETH for gas)
+ *   → demonstrates decoupled agent coordination: signer ≠ submitter
  *
  * Phases:
  *   1. Negotiation dialogue  (real qwen3:0.6b LLM calls via Ollama)
@@ -20,7 +25,7 @@ import {
 } from './src/index.js';
 import {
   createPublicClient, createWalletClient, http,
-  parseAbi, toHex, formatUnits,
+  parseAbi, toHex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
@@ -31,8 +36,8 @@ dotenv.config({ path: '.env.demo' });
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const USDC_ADDRESS   = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
-const ARIA_WALLET    = '0xfB7792E7CaEa2c96570d1eD62e205B8Dc7320d45' as const;
-const NOVA_WALLET    = '0x51A96753db8709AAf9974689DC17fd9B77830aaC' as const;
+const ARIA_WALLET    = '0xfB7792E7CaEa2c96570d1eD62e205B8Dc7320d45' as const;  // fast  — ETH for gas
+const NOVA_WALLET    = '0x51A96753db8709AAf9974689DC17fd9B77830aaC' as const;  // support — USDC to spend
 const INVOICA_URL    = 'https://api.invoica.ai';
 const INVOICA_KEY    = 'sk_302e3efa383ddf86c2247b7c03f859e6a6b0facab582f5c4be83abea71d17047';
 const PAYMENT_USDC   = 5n;
@@ -46,8 +51,8 @@ const C = {
   yellow: '\x1b[33m', blue: '\x1b[34m', magenta: '\x1b[35m',
   cyan: '\x1b[36m', green: '\x1b[32m', gray: '\x1b[90m', red: '\x1b[31m',
 };
-const a   = (s: string) => `${C.blue}${C.bold}${s}${C.reset}`;
-const n   = (s: string) => `${C.magenta}${C.bold}${s}${C.reset}`;
+const a   = (s: string) => `${C.blue}${C.bold}${s}${C.reset}`;    // Aria  — blue
+const nv  = (s: string) => `${C.magenta}${C.bold}${s}${C.reset}`; // Nova  — magenta
 const ok  = (s: string) => `${C.green}${C.bold}${s}${C.reset}`;
 const lbl = (s: string) => `${C.yellow}${C.bold}${s}${C.reset}`;
 const dim = (s: string) => `${C.gray}${s}${C.reset}`;
@@ -110,6 +115,8 @@ async function getPrivateKey(agentName: string): Promise<`0x${string}`> {
 }
 
 // ── x402 Payment (EIP-3009) ────────────────────────────────────────────────────
+// Nova SIGNS (she owns the USDC, from=NOVA_WALLET → to=ARIA_WALLET)
+// Aria SUBMITS (she has ETH for gas, msg.sender — anyone can submit EIP-3009)
 const USDC_DOMAIN = {
   name: 'USD Coin', version: '2',
   chainId: 8453,
@@ -133,10 +140,18 @@ const USDC_ABI = parseAbi([
 ]);
 
 async function payX402(amount: bigint): Promise<`0x${string}`> {
+  // Nova signs the authorization — she's the payer
+  const novaKey     = await getPrivateKey('support');
+  const novaAccount = privateKeyToAccount(novaKey);
+
+  // Aria submits the transaction — she has ETH for gas
   const ariaKey     = await getPrivateKey('fast');
   const ariaAccount = privateKeyToAccount(ariaKey);
 
-  const walletClient = createWalletClient({
+  const novaWalletClient = createWalletClient({
+    account: novaAccount, chain: base, transport: http(BASE_RPC),
+  });
+  const ariaWalletClient = createWalletClient({
     account: ariaAccount, chain: base, transport: http(BASE_RPC),
   });
   const publicClient = createPublicClient({
@@ -147,12 +162,13 @@ async function payX402(amount: bigint): Promise<`0x${string}`> {
   const validAfter  = 0n;
   const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
-  const sig = await walletClient.signTypedData({
+  // Step A: Nova signs (signer = payer)
+  const sig = await novaWalletClient.signTypedData({
     domain:      USDC_DOMAIN,
     types:       TRANSFER_AUTH_TYPES,
     primaryType: 'TransferWithAuthorization',
     message: {
-      from: ariaAccount.address, to: NOVA_WALLET,
+      from: NOVA_WALLET, to: ARIA_WALLET,
       value: amount, validAfter, validBefore, nonce,
     },
   });
@@ -161,11 +177,12 @@ async function payX402(amount: bigint): Promise<`0x${string}`> {
   const s = `0x${sig.slice(66, 130)}` as `0x${string}`;
   const v = parseInt(sig.slice(130, 132), 16);
 
-  const hash = await walletClient.writeContract({
+  // Step B: Aria submits (submitter ≠ signer — this is the EIP-3009 magic)
+  const hash = await ariaWalletClient.writeContract({
     address:      USDC_ADDRESS,
     abi:          USDC_ABI,
     functionName: 'transferWithAuthorization',
-    args: [ariaAccount.address, NOVA_WALLET, amount, validAfter, validBefore, nonce, v, r, s],
+    args: [NOVA_WALLET, ARIA_WALLET, amount, validAfter, validBefore, nonce, v, r, s],
   });
 
   await publicClient.waitForTransactionReceipt({ hash });
@@ -183,16 +200,16 @@ async function issueInvoice(
       'Authorization': `Bearer ${INVOICA_KEY}`,
     },
     body: JSON.stringify({
-      customerEmail:  'aria@agent.ai',
-      customerName:   'Aria Agent',
+      customerEmail:  'nova@creator.ai',
+      customerName:   'Nova Creator',
       amount:         Number(PAYMENT_USDC),
       currency:       'USD',
       chain:          'base',
-      paymentAddress: NOVA_WALLET,
+      paymentAddress: ARIA_WALLET,   // Aria is the seller, receives payment
       paymentDetails: {
         txHash,
-        network: 'base',
-        paidBy:  ARIA_WALLET,
+        network:  'base',
+        paidBy:   NOVA_WALLET,       // Nova paid
         protocol: 'x402',
       },
     }),
@@ -212,9 +229,9 @@ async function main() {
 
   printBox('PACT Protocol Demo — Real Agent Deal with x402 + Invoice', [
     kv('Protocol:', 'PACT v0.2.0  ×  x402 payment  ×  Invoica'),
-    kv('Agents:  ', `${a('Aria')} (aria@agent.ai)  ×  ${n('Nova')} (nova@creator.ai)`),
+    kv('Agents:  ', `${nv('Nova')} (nova@creator.ai)  ×  ${a('Aria')} (aria@agent.ai)`),
     kv('Deal:    ', 'AI educational content licensing — 30 videos'),
-    kv('Payment: ', `$5 USDC on Base mainnet (EIP-3009 transferWithAuthorization)`),
+    kv('Payment: ', `$5 USDC on Base mainnet (Nova signs · Aria submits)`),
     kv('Engine:  ', 'qwen3:0.6b @ Ollama (local, $0.00)'),
   ]);
   await sleep(1000);
@@ -223,57 +240,60 @@ async function main() {
   console.log(`\n${lbl('━━━  PHASE 1 — NEGOTIATION  ━━━')}`);
   await sleep(500);
 
-  const ARIA_PERSONA =
-    'You are Aria, an AI content buyer agent. Speak in first person. Be concise and direct. ' +
-    'Max 2 sentences. No preamble, no self-reference, no pleasantries. Start with a verb or "We".';
-
+  // Nova is now the SELLER — she has the content, sets the price
   const NOVA_PERSONA =
-    'You are Nova, an independent AI content creator. Speak in first person. ' +
-    'Max 2 sentences. No preamble, no self-reference. Start with "I" or a direct counter-statement.';
+    'You are Nova, an independent AI content creator selling video licenses. ' +
+    'Speak in first person. Be concise and direct. ' +
+    'Max 2 sentences. No preamble. Start with "I" or "My".';
 
-  // Aria opens
-  step(1, 9, `${a('Aria')} drafts opening offer…`);
+  // Aria is now the BUYER — she wants to license Nova's content
+  const ARIA_PERSONA =
+    'You are Aria, an AI content buyer agent. Speak in first person. ' +
+    'Max 2 sentences. No preamble, no self-reference. Start with a verb or "We".';
+
+  // Nova opens with her offer
+  step(1, 9, `${nv('Nova')} posts licensing offer…`);
   process.stdout.write(dim('  generating '));
   const t1 = setInterval(() => process.stdout.write(dim('.')), 400);
-  const ariaOpen = await agentSay(
-    ARIA_PERSONA,
-    'Open a licensing negotiation. Offer $3 USDC per video for 30 AI educational videos ' +
-    'with read+publish access to content://nova/videos/*. State the offer directly.',
+  const novaOpen = await agentSay(
+    NOVA_PERSONA,
+    'Post a licensing offer. You have 30 AI educational videos. ' +
+    'Ask $7 USDC per video with read+publish access to content://nova/videos/*. State the offer directly.',
   );
   clearInterval(t1); process.stdout.write('\n');
   await sleep(200);
-  console.log(`\n${a('ARIA')}  ${dim('aria@agent.ai')}`);
-  console.log(`  "${ariaOpen}"\n`);
+  console.log(`\n${nv('NOVA')}  ${dim('nova@creator.ai')}`);
+  console.log(`  "${novaOpen}"\n`);
   await sleep(900);
 
-  // Nova counters
-  step(2, 9, `${n('Nova')} reviews and counters…`);
+  // Aria counters
+  step(2, 9, `${a('Aria')} reviews and counters…`);
   process.stdout.write(dim('  generating '));
   const t2 = setInterval(() => process.stdout.write(dim('.')), 400);
-  const novaCounter = await agentSay(
-    NOVA_PERSONA,
-    `Aria offered: "${ariaOpen}"\n` +
-    'Counter: ask $5 USDC per video. Request analytics read access.',
+  const ariaCounter = await agentSay(
+    ARIA_PERSONA,
+    `Nova offered: "${novaOpen}"\n` +
+    'Counter-offer: propose $5 USDC per video. Keep it brief.',
   );
   clearInterval(t2); process.stdout.write('\n');
   await sleep(200);
-  console.log(`\n${n('NOVA')}  ${dim('nova@creator.ai')}`);
-  console.log(`  "${novaCounter}"\n`);
+  console.log(`\n${a('ARIA')}  ${dim('aria@agent.ai')}`);
+  console.log(`  "${ariaCounter}"\n`);
   await sleep(900);
 
-  // Aria accepts
-  step(3, 9, `${a('Aria')} considers counter…`);
+  // Nova accepts
+  step(3, 9, `${nv('Nova')} considers counter…`);
   process.stdout.write(dim('  generating '));
   const t3 = setInterval(() => process.stdout.write(dim('.')), 400);
-  const ariaAccept = await agentSay(
-    ARIA_PERSONA,
-    `Nova countered: "${novaCounter}"\n` +
-    'Accept. Confirm the agreed terms in 1-2 sentences.',
+  const novaAccept = await agentSay(
+    NOVA_PERSONA,
+    `Aria countered: "${ariaCounter}"\n` +
+    'Accept the $5 USDC offer. Confirm terms in 1-2 sentences.',
   );
   clearInterval(t3); process.stdout.write('\n');
   await sleep(200);
-  console.log(`\n${a('ARIA')}  ${dim('aria@agent.ai')}`);
-  console.log(`  "${ariaAccept}"\n`);
+  console.log(`\n${nv('NOVA')}  ${dim('nova@creator.ai')}`);
+  console.log(`  "${novaAccept}"\n`);
   await sleep(700);
 
   console.log(`  ${ok('✓')} ${C.bold}Verbal agreement reached.${C.reset} Sealing with PACT…`);
@@ -289,51 +309,51 @@ async function main() {
   const NSECRET   = 'nova-creator-secret-v1';
   const expiresAt = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
 
-  // M1: Aria → Nova (analytics read)
-  step(4, 9, `${a('Aria')} creates Mandate M1 — grants ${n('Nova')} analytics read access`);
+  // M1: Nova → Aria (grants buyer analytics read access on sold content)
+  step(4, 9, `${nv('Nova')} creates Mandate M1 — grants ${a('Aria')} post-sale analytics access`);
   await sleep(350);
   const m1 = signMandate(
-    createMandate(ARIA_ID, NOVA_ID, {
-      description: 'Nova may read content analytics for her licensed videos',
+    createMandate(NOVA_ID, ARIA_ID, {
+      description: 'Aria may read analytics for the content she licensed from Nova',
       actions:     ['read'],
-      resources:   ['analytics://aria/scs001/*'],
+      resources:   ['analytics://nova/licensed/*'],
       maxPaymentUsdc: null,
-    }, { expiresAt }), ASECRET);
+    }, { expiresAt }), NSECRET);
 
   console.log(kv('  mandate_id:', dim(m1.id)));
-  console.log(kv('  grantor:   ', a(m1.grantor)));
-  console.log(kv('  grantee:   ', n(m1.grantee)));
+  console.log(kv('  grantor:   ', nv(m1.grantor)));
+  console.log(kv('  grantee:   ', a(m1.grantee)));
   console.log(kv('  actions:   ', m1.scope.actions.join(', ')));
   console.log(kv('  resource:  ', m1.scope.resources[0]));
   console.log(kv('  payment:   ', 'none'));
   console.log(kv('  expires:   ', m1.expiresAt!.split('T')[0]));
   console.log(kv('  sig:       ', dim(m1.signature.slice(0, 28) + '…')));
   await sleep(400);
-  const v1 = verifyMandate(m1, ASECRET);
+  const v1 = verifyMandate(m1, NSECRET);
   console.log(`  ${ok('✓')} signature verified — ${ok(v1.valid ? 'VALID' : 'INVALID')}`);
   await sleep(650);
 
-  // M2: Nova → Aria (content access, $5 USDC max)
-  step(5, 9, `${n('Nova')} creates Mandate M2 — grants ${a('Aria')} content access ($5 USDC/tx)`);
+  // M2: Aria → Nova (authorizes Nova's content access, capped at $5 USDC)
+  step(5, 9, `${a('Aria')} creates Mandate M2 — authorizes payment to ${nv('Nova')} ($5 USDC/tx)`);
   await sleep(350);
   const m2 = signMandate(
-    createMandate(NOVA_ID, ARIA_ID, {
-      description: "Aria may read and publish Nova's AI educational video library",
+    createMandate(ARIA_ID, NOVA_ID, {
+      description: "Aria authorizes read+publish rights on Nova's video library",
       actions:     ['read', 'publish'],
       resources:   ['content://nova/videos/*'],
       maxPaymentUsdc: 5,
-    }, { expiresAt }), NSECRET);
+    }, { expiresAt }), ASECRET);
 
   console.log(kv('  mandate_id:', dim(m2.id)));
-  console.log(kv('  grantor:   ', n(m2.grantor)));
-  console.log(kv('  grantee:   ', a(m2.grantee)));
+  console.log(kv('  grantor:   ', a(m2.grantor)));
+  console.log(kv('  grantee:   ', nv(m2.grantee)));
   console.log(kv('  actions:   ', m2.scope.actions.join(', ')));
   console.log(kv('  resource:  ', m2.scope.resources[0]));
   console.log(kv('  payment:   ', `max $${m2.scope.maxPaymentUsdc} USDC per tx`));
   console.log(kv('  expires:   ', m2.expiresAt!.split('T')[0]));
   console.log(kv('  sig:       ', dim(m2.signature.slice(0, 28) + '…')));
   await sleep(400);
-  const v2 = verifyMandate(m2, NSECRET);
+  const v2 = verifyMandate(m2, ASECRET);
   console.log(`  ${ok('✓')} signature verified — ${ok(v2.valid ? 'VALID' : 'INVALID')}`);
   await sleep(650);
 
@@ -359,15 +379,15 @@ async function main() {
   registry.store(m1);
   registry.store(m2);
 
-  let frame = openFrame(ARIA_ID, [m1.id]);
-  frame = addParticipant(frame, NOVA_ID);
+  let frame = openFrame(NOVA_ID, [m1.id]);
+  frame = addParticipant(frame, ARIA_ID);
   frame = addMandateToFrame(frame, m2.id);
   frame = closeFrame(frame);
 
   console.log(kv('  frame_id:    ', dim(frame.id)));
-  console.log(kv('  initiator:   ', a(frame.initiator)));
-  console.log(kv('  participants:', [a(frame.participants[0]), n(frame.participants[1])].join(', ')));
-  console.log(kv('  mandates:    ', 'M1 (analytics:read)  +  M2 (content:read,publish)'  ));
+  console.log(kv('  initiator:   ', nv(frame.initiator)));
+  console.log(kv('  participants:', [nv(frame.participants[0]), a(frame.participants[1])].join(', ')));
+  console.log(kv('  mandates:    ', 'M1 (analytics:read)  +  M2 (content:read,publish)'));
   console.log(kv('  closed_at:   ', dim(frame.closedAt!)));
   console.log(kv('  status:      ', ok(frame.status)));
   await sleep(600);
@@ -379,12 +399,14 @@ async function main() {
   console.log(`\n${lbl('━━━  PHASE 3 — x402 PAYMENT (Base mainnet)  ━━━')}`);
   await sleep(500);
 
-  step(8, 9, `${a('Aria')} signs EIP-3009 authorization and submits $${PAYMENT_USDC} USDC → ${n('Nova')}…`);
-  console.log(kv('  from:    ', a(ARIA_WALLET)));
-  console.log(kv('  to:      ', n(NOVA_WALLET)));
-  console.log(kv('  amount:  ', `${PAYMENT_USDC} USDC (${PAYMENT_ATOMIC} atomic units)`));
-  console.log(kv('  token:   ', `USDC @ ${USDC_ADDRESS}`));
-  console.log(kv('  chain:   ', 'Base mainnet (chainId 8453)'));
+  step(8, 9,
+    `${nv('Nova')} signs EIP-3009 authorization · ${a('Aria')} submits · $${PAYMENT_USDC} USDC settles`);
+  console.log(kv('  payer (signs): ', nv(`${NOVA_WALLET}  [USDC]`)));
+  console.log(kv('  payee:         ', a(`${ARIA_WALLET}  [receives]`)));
+  console.log(kv('  submitter:     ', a(`${ARIA_WALLET}  [ETH for gas]`)));
+  console.log(kv('  amount:        ', `${PAYMENT_USDC} USDC  (EIP-3009 — signer ≠ submitter)`));
+  console.log(kv('  token:         ', `USDC @ ${USDC_ADDRESS}`));
+  console.log(kv('  chain:         ', 'Base mainnet (chainId 8453)'));
   process.stdout.write(dim('\n  broadcasting transaction '));
   const tPay = setInterval(() => process.stdout.write(dim('.')), 800);
 
@@ -408,7 +430,7 @@ async function main() {
   console.log(`\n${lbl('━━━  PHASE 4 — INVOICA INVOICE  ━━━')}`);
   await sleep(500);
 
-  step(9, 9, 'Requesting invoice from Invoica…');
+  step(9, 9, `Issuing invoice — ${nv('Nova')} billed · ${a('Aria')} receives payment`);
   process.stdout.write(dim('  issuing '));
   const tInv = setInterval(() => process.stdout.write(dim('.')), 600);
 
@@ -421,7 +443,7 @@ async function main() {
   } catch (err: any) {
     clearInterval(tInv); process.stdout.write('\n');
     console.log(`\n  ${C.red}${C.bold}[INVOICE ERROR]${C.reset} ${err.message}`);
-    console.log(dim('  (invoice skipped — Invoica may not be running)'));
+    console.log(dim('  (invoice skipped)'));
   }
 
   await sleep(500);
@@ -431,17 +453,19 @@ async function main() {
   printBox('DEAL COMPLETE — Full Pipeline Summary', [
     '',
     `  ${lbl('Phase 1 — Negotiation')}`,
-    kv('  Aria opened:', `"$3 USDC / video"`),
-    kv('  Nova countered:', `"$5 USDC / video + analytics access"`),
-    kv('  Agreement:', ok('ACCEPTED at $5 USDC / video')),
+    kv('  Nova listed:  ', `"$7 USDC / video"`),
+    kv('  Aria countered:', `"$5 USDC / video"`),
+    kv('  Agreement:    ', ok('ACCEPTED at $5 USDC / video')),
     '',
     `  ${lbl('Phase 2 — PACT Protocol')}`,
     kv('  Frame:', `${dim(frame.id.slice(0, 8))}…  ${ok('CLOSED')}`),
-    kv('  M1:', `${dim(m1.id.slice(0, 8))}…  Aria → Nova   analytics:read     ${ok('VALID')}`),
-    kv('  M2:', `${dim(m2.id.slice(0, 8))}…  Nova → Aria   content:publish    ${ok('VALID')}`),
+    kv('  M1:', `${dim(m1.id.slice(0, 8))}…  Nova → Aria   analytics:read     ${ok('VALID')}`),
+    kv('  M2:', `${dim(m2.id.slice(0, 8))}…  Aria → Nova   content:publish    ${ok('VALID')}`),
     kv('  Registry:', `${snap.mandates.length} mandates stored   ${snap.revocations.length} revocations`),
     '',
-    `  ${lbl('Phase 3 — x402 Payment')}`,
+    `  ${lbl('Phase 3 — x402 Payment  (EIP-3009 split)')}`,
+    kv('  Nova signed:  ', `TransferWithAuthorization  →  Aria`),
+    kv('  Aria submitted:', `writeContract  (paid gas)`),
     kv('  Amount:', `$${PAYMENT_USDC} USDC on Base mainnet`),
     kv('  Tx:', dim(txHash.slice(0, 20) + '…')),
     kv('  Status:', ok('CONFIRMED')),
