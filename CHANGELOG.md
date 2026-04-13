@@ -36,5 +36,5 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-[0.2.0]: https://github.com/godman-protocols/pact/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/godman-protocols/pact/releases/tag/v0.1.0
+[0.2.0]: https://github.com/Godman-s/pact/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Godman-s/pact/releases/tag/v0.1.0

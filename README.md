@@ -10,7 +10,7 @@
 PACT is an open protocol for autonomous AI agents to establish **verifiable cooperation agreements**, delegate authority with scoped mandates, and coordinate safely across heterogeneous runtimes — without a human in the loop.
 
 ```bash
-npx skills add https://github.com/godman-protocols/pact
+npx skills add https://github.com/Godman-s/pact
 # or
 npm install @godman-protocols/pact
 ```
@@ -187,4 +187,4 @@ PACT is the client-side trust layer that works with:
 
 Apache License 2.0 — see [LICENSE](./LICENSE)
 
-Part of the [Godman Protocols](https://github.com/godman-protocols) portfolio.
+Part of the [Godman Protocols](https://github.com/Godman-s) portfolio.
