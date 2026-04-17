@@ -5,14 +5,18 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node: >=20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 
-> **v0.2.0** · Apache 2.0 · `@godman-protocols/pact` · Node 20+ / Deno 1.40+
+> **v0.3.1** · Apache 2.0 · `@godman-protocols/pact` · Node 20+ / Deno 1.40+
 
 PACT is an open protocol for autonomous AI agents to establish **verifiable cooperation agreements**, delegate authority with scoped mandates, and coordinate safely across heterogeneous runtimes — without a human in the loop.
 
 ```bash
-npx skills add https://github.com/Godman-s/pact
-# or
 npm install @godman-protocols/pact
+```
+
+Or add it to your agent stack via skills:
+
+```bash
+npx skills add https://github.com/Godman-s/pact
 ```
 
 ---
@@ -129,7 +133,7 @@ frame = closeFrame(frame); // frame.status === 'closed'
 
 ## Security Model
 
-PACT v0.2 uses HMAC-SHA256 for mandate signing. This is appropriate for:
+PACT v0.3 uses HMAC-SHA256 for mandate signing. This is appropriate for:
 - Single-organisation deployments where the grantor controls the secret
 - Development and prototyping
 - Systems where secrets are managed by a vault (e.g. AMD-24 sovereign vault)
@@ -175,8 +179,9 @@ PACT is the client-side trust layer that works with:
 - [x] Signature verification + scope check + payment guard (v0.2)
 - [x] CoordinationFrame lifecycle (v0.2)
 - [x] MandateRegistry with revocation ledger (v0.2)
-- [ ] Ed25519 signing (v0.3)
-- [ ] EIP-712 typed data support (v0.3)
+- [x] Full implementation shipped — core, verifier, coordinator, registry (v0.3.1)
+- [ ] Ed25519 signing (v0.4)
+- [ ] EIP-712 typed data support (v0.4)
 - [ ] Persistent registry adapter (Supabase / SQLite) (v0.4)
 - [ ] Python SDK (v0.5)
 - [ ] x402 payment-gated mandate execution (v0.5)
