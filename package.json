@@ -1,6 +1,6 @@
 {
   "name": "@godman-protocols/pact",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Protocol for Agent Constitutional Trust — five-chamber trust and negotiation",
   "type": "module",
   "main": "dist/index.js",
