@@ -1,5 +1,8 @@
 # PACT — Protocol for Agent Coordination and Trust
 
+> **Canonical name and scope (Kognai Book of Code, 2026-09-07).** PACT — Protocol for Agent Constitutional Trust. This package implements the mandate layer of PACT: signed, scoped mandates, revocation ledger, coordination frames. The five-chamber airlock (rate limit and DID check, trust score, intent scan, negotiation room, capability-locked session) is specified in PACT v1 and implemented as Cerberus inside Kognai; it is not in this package yet.
+
+
 
 [![npm version](https://img.shields.io/npm/v/@godman-protocols/pact.svg)](https://www.npmjs.com/package/@godman-protocols/pact)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
